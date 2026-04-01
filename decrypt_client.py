@@ -1,51 +1,18 @@
 """
-Application-side decryption for data encrypted with Snowflake ENCRYPT_RAW (AES-256-GCM).
-
-Key retrieval (in priority order):
-  1. ENCRYPTION_KEY_HEX env var (direct plaintext hex key — for testing)
-  2. KMS_ENCRYPTED_KEY_BLOB env var (base64 CiphertextBlob — calls KMS decrypt)
-
-Requirements:
-    pip install -r requirements.txt
+Decrypt Snowflake ENCRYPT_RAW (AES-256-GCM) columns client-side.
 
 Usage:
-    export KMS_ENCRYPTED_KEY_BLOB=<base64_CiphertextBlob>
+    export ENCRYPTION_KEY_HEX=<your_64_char_hex_key>
     export SNOWFLAKE_CONNECTION_NAME=default
     python decrypt_client.py
 """
 
-import argparse
-import base64
 import json
 import os
 import sys
 
 import snowflake.connector
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
-
-def get_key_from_kms(encrypted_key_blob_b64: str, region: str = None) -> str:
-    import boto3
-    session = boto3.Session(region_name=region)
-    client = session.client("kms")
-    response = client.decrypt(CiphertextBlob=base64.b64decode(encrypted_key_blob_b64))
-    return response["Plaintext"].hex()
-
-
-def get_encryption_key(region: str = None) -> str:
-    env_key = os.environ.get("ENCRYPTION_KEY_HEX")
-    if env_key:
-        print("Using encryption key from ENCRYPTION_KEY_HEX env var")
-        return env_key
-
-    blob = os.environ.get("KMS_ENCRYPTED_KEY_BLOB")
-    if blob:
-        print("Decrypting key via AWS KMS...")
-        return get_key_from_kms(blob, region)
-
-    print("ERROR: No encryption key available.", file=sys.stderr)
-    print("  Set ENCRYPTION_KEY_HEX (plaintext hex) or KMS_ENCRYPTED_KEY_BLOB (base64 blob)", file=sys.stderr)
-    sys.exit(1)
 
 
 def decrypt_column(encrypted_variant: dict, key_hex: str) -> str:
@@ -64,12 +31,10 @@ def decrypt_column(encrypted_variant: dict, key_hex: str) -> str:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Decrypt Snowflake ENCRYPT_RAW columns client-side")
-    parser.add_argument("--region", default=None, help="AWS region for KMS")
-    parser.add_argument("--query", default="SELECT * FROM CUSTOMER_ENC_V", help="SQL query to run")
-    args = parser.parse_args()
-
-    key_hex = get_encryption_key(args.region)
+    key_hex = os.environ.get("ENCRYPTION_KEY_HEX")
+    if not key_hex:
+        print("ERROR: Set ENCRYPTION_KEY_HEX env var (64-char hex key from KMS)", file=sys.stderr)
+        sys.exit(1)
 
     conn = snowflake.connector.connect(
         connection_name=os.getenv("SNOWFLAKE_CONNECTION_NAME") or "default"
@@ -77,7 +42,7 @@ def main():
 
     try:
         cur = conn.cursor()
-        cur.execute(args.query)
+        cur.execute("SELECT * FROM CUSTOMER_ENC_V")
         columns = [desc[0] for desc in cur.description]
         enc_columns = [c for c in columns if c.endswith("_ENC")]
 
