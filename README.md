@@ -89,7 +89,6 @@ python decrypt_client.py
 |---|---|
 | `encrypt_view.sql` | Creates the base table, encrypted view, and RBAC grants |
 | `decrypt_client.py` | Calls KMS to get the key, queries the view, decrypts client-side |
-| `setup_kms_key.py` | (Optional) Script to generate a data key from your CMK via boto3 |
 
 ## Production notes
 
