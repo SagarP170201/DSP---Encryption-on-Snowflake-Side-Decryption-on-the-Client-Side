@@ -8,8 +8,9 @@ Encrypt sensitive columns using Snowflake `ENCRYPT_RAW` (AES-256-GCM). Decrypt t
 Your KMS key (32-byte hex) ──► Snowflake view (ENCRYPT_RAW) ──► Your app (AES-GCM decrypt)
 ```
 
-1. Your existing KMS key is used in a Snowflake view to encrypt sensitive columns
-2. Your app uses the same key to decrypt client-side
+1. Your existing KMS key is used in a Snowflake view to encrypt 4 sensitive columns on read
+2. Base table stays plaintext — only the view output is encrypted
+3. Your app decrypts client-side using the same key
 
 ## Prerequisites
 
@@ -32,6 +33,7 @@ SELECT * FROM CUSTOMER_ENC_V;
 ```
 
 Each encrypted column returns: `{ "iv": "...", "ciphertext": "...", "tag": "..." }`
+NULL columns return NULL (no error).
 
 ### Step 2: Decrypt in your app
 
@@ -42,18 +44,35 @@ export SNOWFLAKE_CONNECTION_NAME=default
 python decrypt_client.py
 ```
 
+## Security (RBAC)
+
+The encryption key lives in the view definition. Tighten access to prevent exposure:
+
+```sql
+-- Only admin roles should be able to see the view DDL
+REVOKE ALL ON VIEW CUSTOMER_ENC_V FROM ROLE SYSADMIN;
+GRANT SELECT ON VIEW CUSTOMER_ENC_V TO ROLE APP_ROLE;
+
+-- Verify who can run GET_DDL on the view — restrict to crypto-admin only
+SHOW GRANTS ON VIEW CUSTOMER_ENC_V;
+```
+
+Anyone who can run `GET_DDL('VIEW', 'CUSTOMER_ENC_V')` can see the key. Treat that permission as crypto-admin level.
+
 ## Files
 
 | File | What it does |
 |---|---|
-| `encrypt_view.sql` | Creates the base table, encrypted view, and RBAC grants |
+| `encrypt_view.sql` | Creates the base table, encrypted view (with NULL handling), and RBAC grants |
 | `decrypt_client.py` | Queries the encrypted view and decrypts client-side |
 | `requirements.txt` | Python dependencies |
 
-## Production notes
+## Production upgrade path
 
-- **Key in view DDL:** The hex key is visible via `GET_DDL`. For production, use a [Snowflake external function + Lambda](https://docs.snowflake.com/en/sql-reference/external-functions-creating-aws) so the key never appears in SQL.
-- **If you don't need external decryption**, [dynamic data masking](https://docs.snowflake.com/en/user-guide/security-column-ddm-intro) is simpler.
+If the key must never appear in Snowflake SQL, the next step is:
+**Snowflake external function → AWS API Gateway → Lambda → KMS**
+
+Lambda encrypts the data using the key fetched from KMS at runtime. Key never enters Snowflake. See [Snowflake external functions on AWS](https://docs.snowflake.com/en/sql-reference/external-functions-creating-aws).
 
 ## References
 

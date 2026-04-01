@@ -1,5 +1,5 @@
 -- ============================================================
--- OPTION A: Encrypt-in-view with ENCRYPT_RAW (AES-256-GCM)
+-- Encrypt-in-view with ENCRYPT_RAW (AES-256-GCM)
 -- ============================================================
 
 -- 1. Set binary output to HEX for readability
@@ -16,54 +16,65 @@ CREATE OR REPLACE TABLE CUSTOMER_BASE (
 );
 
 -- 3. Encrypted view
---    Replace <32_BYTE_KEY_HEX> with your 64-char hex string (32 bytes).
---    This MUST be the same key stored in AWS KMS / Secrets Manager.
---    4th arg = NULL means no AAD (additional authenticated data).
---    3rd arg = NULL means Snowflake generates a random IV per call.
+--    Replace <32_BYTE_KEY_HEX> with your 64-char hex string (32 bytes) from KMS.
+--    3rd arg = NULL → Snowflake generates a random IV per call.
+--    4th arg = NULL → no AAD (additional authenticated data).
 CREATE OR REPLACE VIEW CUSTOMER_ENC_V AS
 SELECT
   ID,
   NAME,
 
-  ENCRYPT_RAW(
-    TO_BINARY(HEX_ENCODE(EMAIL), 'HEX'),
-    TO_BINARY('<32_BYTE_KEY_HEX>', 'HEX'),
-    NULL,                -- random IV
-    NULL,                -- no AAD
-    'AES-GCM'
-  ) AS EMAIL_ENC,
+  CASE WHEN EMAIL IS NULL THEN NULL ELSE
+    ENCRYPT_RAW(
+      TO_BINARY(HEX_ENCODE(EMAIL), 'HEX'),
+      TO_BINARY('<32_BYTE_KEY_HEX>', 'HEX'),
+      NULL,
+      NULL,
+      'AES-GCM'
+    )
+  END AS EMAIL_ENC,
 
-  ENCRYPT_RAW(
-    TO_BINARY(HEX_ENCODE(PHONE), 'HEX'),
-    TO_BINARY('<32_BYTE_KEY_HEX>', 'HEX'),
-    NULL,
-    NULL,
-    'AES-GCM'
-  ) AS PHONE_ENC,
+  CASE WHEN PHONE IS NULL THEN NULL ELSE
+    ENCRYPT_RAW(
+      TO_BINARY(HEX_ENCODE(PHONE), 'HEX'),
+      TO_BINARY('<32_BYTE_KEY_HEX>', 'HEX'),
+      NULL,
+      NULL,
+      'AES-GCM'
+    )
+  END AS PHONE_ENC,
 
-  ENCRYPT_RAW(
-    TO_BINARY(HEX_ENCODE(ADDRESS), 'HEX'),
-    TO_BINARY('<32_BYTE_KEY_HEX>', 'HEX'),
-    NULL,
-    NULL,
-    'AES-GCM'
-  ) AS ADDRESS_ENC,
+  CASE WHEN ADDRESS IS NULL THEN NULL ELSE
+    ENCRYPT_RAW(
+      TO_BINARY(HEX_ENCODE(ADDRESS), 'HEX'),
+      TO_BINARY('<32_BYTE_KEY_HEX>', 'HEX'),
+      NULL,
+      NULL,
+      'AES-GCM'
+    )
+  END AS ADDRESS_ENC,
 
-  ENCRYPT_RAW(
-    TO_BINARY(HEX_ENCODE(NATIONAL_ID), 'HEX'),
-    TO_BINARY('<32_BYTE_KEY_HEX>', 'HEX'),
-    NULL,
-    NULL,
-    'AES-GCM'
-  ) AS NATIONAL_ID_ENC
+  CASE WHEN NATIONAL_ID IS NULL THEN NULL ELSE
+    ENCRYPT_RAW(
+      TO_BINARY(HEX_ENCODE(NATIONAL_ID), 'HEX'),
+      TO_BINARY('<32_BYTE_KEY_HEX>', 'HEX'),
+      NULL,
+      NULL,
+      'AES-GCM'
+    )
+  END AS NATIONAL_ID_ENC
 
 FROM CUSTOMER_BASE;
 
 -- 4. Access control
+--    App role sees encrypted view only — not the base table.
+--    Only crypto-admin level roles should have GET_DDL access on this view.
 GRANT SELECT ON VIEW CUSTOMER_ENC_V TO ROLE APP_ROLE;
 REVOKE SELECT ON TABLE CUSTOMER_BASE FROM ROLE APP_ROLE;
 
 -- 5. Verify (after inserting test data)
 -- INSERT INTO CUSTOMER_BASE VALUES (1, 'Alice', 'alice@test.com', '555-1234', '123 Main St', 'ID-9999');
+-- INSERT INTO CUSTOMER_BASE VALUES (2, 'Bob', NULL, '555-5678', NULL, 'ID-8888');
 -- SELECT * FROM CUSTOMER_ENC_V;
 -- Each *_ENC column returns VARIANT: { "iv": "...", "ciphertext": "...", "tag": "..." }
+-- NULL columns return NULL (no error)
